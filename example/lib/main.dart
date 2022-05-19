@@ -96,6 +96,19 @@ class _TransitionsHomePageState extends State<_TransitionsHomePage> {
                     );
                   },
                 ),
+                _TransitionListTile(
+                  title: 'Aero',
+                  subtitle: 'AeroOpenContainerTransition',
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (BuildContext context) {
+                          return const FadeScaleTransitionDemo();
+                        },
+                      ),
+                    );
+                  },
+                ),
               ],
             ),
           ),

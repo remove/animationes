@@ -2,8 +2,32 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'dart:math';
+import 'dart:ui';
+
+import 'package:flutter/cupertino.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+
+const double _kBackGestureWidth = 20.0;
+const double _kMinFlingVelocity = 1.0; // Screen widths per second.
+
+// An eyeballed value for the maximum time it takes for a page to animate forward
+// if the user releases a page mid swipe.
+const int _kMaxDroppedSwipePageForwardAnimationTime = 800; // Milliseconds.
+
+// The maximum time for a page to get reset to it's original position if the
+// user releases a page mid swipe.
+const int _kMaxPageBackAnimationTime = 300; // Milliseconds.
+
+/// Barrier color for a Cupertino modal barrier.
+///
+/// Extracted from https://developer.apple.com/design/resources/.
+const Color kCupertinoModalBarrierColor = CupertinoDynamicColor.withBrightness(
+  color: Color(0x33000000),
+  darkColor: Color(0x7A000000),
+);
 
 /// Signature for `action` callback function provided to [OpenContainer.openBuilder].
 ///
@@ -355,6 +379,7 @@ class _HideableState extends State<_Hideable> {
   /// When non-null the child is replaced by a [SizedBox] of the set size.
   Size? get placeholderSize => _placeholderSize;
   Size? _placeholderSize;
+
   set placeholderSize(Size? value) {
     if (_placeholderSize == value) {
       return;
@@ -370,6 +395,7 @@ class _HideableState extends State<_Hideable> {
   /// (i.e. [isInTree] returns false).
   bool get isVisible => _visible;
   bool _visible = true;
+
   set isVisible(bool value) {
     if (_visible == value) {
       return;
@@ -396,7 +422,8 @@ class _HideableState extends State<_Hideable> {
   }
 }
 
-class _OpenContainerRoute<T> extends ModalRoute<T> {
+class _OpenContainerRoute<T> extends PageRoute<T>
+    with HorizontalTransitionMixin {
   _OpenContainerRoute({
     required this.closedColor,
     required this.openColor,
@@ -603,8 +630,6 @@ class _OpenContainerRoute<T> extends ModalRoute<T> {
           _toggleHideable(hide: false);
           break;
         case AnimationStatus.completed:
-          _toggleHideable(hide: true);
-          break;
         case AnimationStatus.forward:
         case AnimationStatus.reverse:
           break;
@@ -729,138 +754,150 @@ class _OpenContainerRoute<T> extends ModalRoute<T> {
     Animation<double> animation,
     Animation<double> secondaryAnimation,
   ) {
-    return Align(
-      alignment: Alignment.topLeft,
-      child: AnimatedBuilder(
-        animation: animation,
-        builder: (BuildContext context, Widget? child) {
-          if (animation.isCompleted) {
-            return SizedBox.expand(
-              child: Material(
-                color: openColor,
-                elevation: openElevation,
-                shape: openShape,
-                child: Builder(
-                  key: _openBuilderKey,
-                  builder: (BuildContext context) {
-                    return openBuilder(context, closeContainer);
-                  },
+    return _AeroBackGestureDetector(
+      enabledCallback: () =>
+          HorizontalTransitionMixin._isPopGestureEnabled<T>(this),
+      onStartPopGesture: () => _AeroBackGestureController<T>(
+        navigator: this.navigator!,
+        controller: this.controller!,
+      ),
+      child: Align(
+        alignment: Alignment.topLeft,
+        child: AnimatedBuilder(
+          animation: animation,
+          builder: (BuildContext context, Widget? child) {
+            if (animation.isCompleted) {
+              return SizedBox.expand(
+                child: Material(
+                  color: openColor,
+                  elevation: openElevation,
+                  shape: openShape,
+                  child: Builder(
+                    key: _openBuilderKey,
+                    builder: (BuildContext context) {
+                      return openBuilder(context, closeContainer);
+                    },
+                  ),
                 ),
-              ),
-            );
-          }
+              );
+            }
 
-          final Animation<double> curvedAnimation = CurvedAnimation(
-            parent: animation,
-            curve: Curves.fastOutSlowIn,
-            reverseCurve:
-                _transitionWasInterrupted ? null : Curves.fastOutSlowIn.flipped,
-          );
-          TweenSequence<Color?>? colorTween;
-          TweenSequence<double>? closedOpacityTween, openOpacityTween;
-          Animatable<Color?>? scrimTween;
-          switch (animation.status) {
-            case AnimationStatus.dismissed:
-            case AnimationStatus.forward:
-              closedOpacityTween = _closedOpacityTween;
-              openOpacityTween = _openOpacityTween;
-              colorTween = _colorTween;
-              scrimTween = _scrimFadeInTween;
-              break;
-            case AnimationStatus.reverse:
-              if (_transitionWasInterrupted) {
+            final Animation<double> curvedAnimation = CurvedAnimation(
+              parent: animation,
+              curve: Curves.ease,
+              reverseCurve: _transitionWasInterrupted
+                  ? null
+                  : Curves.fastOutSlowIn.flipped,
+            );
+            TweenSequence<Color?>? colorTween;
+            TweenSequence<double>? closedOpacityTween, openOpacityTween;
+            Animatable<Color?>? scrimTween;
+            switch (animation.status) {
+              case AnimationStatus.dismissed:
+              case AnimationStatus.forward:
                 closedOpacityTween = _closedOpacityTween;
                 openOpacityTween = _openOpacityTween;
                 colorTween = _colorTween;
                 scrimTween = _scrimFadeInTween;
                 break;
-              }
-              closedOpacityTween = _closedOpacityTween.flipped;
-              openOpacityTween = _openOpacityTween.flipped;
-              colorTween = _colorTween.flipped;
-              scrimTween = _scrimFadeOutTween;
-              break;
-            case AnimationStatus.completed:
-              assert(false); // Unreachable.
-              break;
-          }
-          assert(colorTween != null);
-          assert(closedOpacityTween != null);
-          assert(openOpacityTween != null);
-          assert(scrimTween != null);
+              case AnimationStatus.reverse:
+                if (_transitionWasInterrupted) {
+                  closedOpacityTween = _closedOpacityTween;
+                  openOpacityTween = _openOpacityTween;
+                  colorTween = _colorTween;
+                  scrimTween = _scrimFadeInTween;
+                  break;
+                }
+                closedOpacityTween = _closedOpacityTween.flipped;
+                openOpacityTween = _openOpacityTween.flipped;
+                colorTween = _colorTween.flipped;
+                scrimTween = _scrimFadeOutTween;
+                break;
+              case AnimationStatus.completed:
+                assert(false); // Unreachable.
+                break;
+            }
+            assert(colorTween != null);
+            assert(closedOpacityTween != null);
+            assert(openOpacityTween != null);
+            assert(scrimTween != null);
 
-          final Rect rect = _rectTween.evaluate(curvedAnimation)!;
-          return SizedBox.expand(
-            child: Container(
-              color: scrimTween!.evaluate(curvedAnimation),
-              child: Align(
-                alignment: Alignment.topLeft,
-                child: Transform.translate(
-                  offset: Offset(rect.left, rect.top),
-                  child: SizedBox(
-                    width: rect.width,
-                    height: rect.height,
-                    child: Material(
-                      clipBehavior: Clip.antiAlias,
-                      animationDuration: Duration.zero,
-                      color: colorTween!.evaluate(animation),
-                      shape: _shapeTween.evaluate(curvedAnimation),
-                      elevation: _elevationTween.evaluate(curvedAnimation),
-                      child: Stack(
-                        fit: StackFit.passthrough,
-                        children: <Widget>[
-                          // Closed child fading out.
-                          FittedBox(
-                            fit: BoxFit.fitWidth,
-                            alignment: Alignment.topLeft,
-                            child: SizedBox(
-                              width: _rectTween.begin!.width,
-                              height: _rectTween.begin!.height,
-                              child: (hideableKey.currentState?.isInTree ??
-                                      false)
-                                  ? null
-                                  : Opacity(
-                                      opacity: closedOpacityTween!
-                                          .evaluate(animation),
-                                      child: Builder(
-                                        key: closedBuilderKey,
-                                        builder: (BuildContext context) {
-                                          // Use dummy "open container" callback
-                                          // since we are in the process of opening.
-                                          return closedBuilder(context, () {});
-                                        },
+            final Rect rect = _rectTween.evaluate(curvedAnimation)!;
+            return SizedBox.expand(
+              child: Container(
+                color: scrimTween!.evaluate(curvedAnimation),
+                child: Align(
+                  alignment: Alignment.topLeft,
+                  child: Transform.translate(
+                    offset: Offset(rect.left, rect.top),
+                    child: SizedBox(
+                      width: rect.width,
+                      height: rect.height,
+                      child: Material(
+                        clipBehavior: Clip.antiAlias,
+                        animationDuration: Duration.zero,
+                        color: colorTween!.evaluate(animation),
+                        shape: _shapeTween.evaluate(curvedAnimation),
+                        elevation: _elevationTween.evaluate(curvedAnimation),
+                        child: Stack(
+                          fit: StackFit.passthrough,
+                          children: <Widget>[
+                            // Closed child fading out.
+                            FittedBox(
+                              fit: BoxFit.fitWidth,
+                              alignment: Alignment.topLeft,
+                              child: SizedBox(
+                                width: _rectTween.begin!.width,
+                                height: _rectTween.begin!.height,
+                                child: (hideableKey.currentState?.isInTree ??
+                                        false)
+                                    ? null
+                                    : Opacity(
+                                        opacity: closedOpacityTween!
+                                            .evaluate(animation),
+                                        child: Builder(
+                                          key: closedBuilderKey,
+                                          builder: (BuildContext context) {
+                                            // Use dummy "open container" callback
+                                            // since we are in the process of opening.
+                                            return closedBuilder(
+                                                context, () {});
+                                          },
+                                        ),
                                       ),
-                                    ),
+                              ),
                             ),
-                          ),
 
-                          // Open child fading in.
-                          FittedBox(
-                            fit: BoxFit.fitWidth,
-                            alignment: Alignment.topLeft,
-                            child: SizedBox(
-                              width: _rectTween.end!.width,
-                              height: _rectTween.end!.height,
-                              child: Opacity(
-                                opacity: openOpacityTween!.evaluate(animation),
-                                child: Builder(
-                                  key: _openBuilderKey,
-                                  builder: (BuildContext context) {
-                                    return openBuilder(context, closeContainer);
-                                  },
+                            // Open child fading in.
+                            FittedBox(
+                              fit: BoxFit.fitWidth,
+                              alignment: Alignment.topLeft,
+                              child: SizedBox(
+                                width: _rectTween.end!.width,
+                                height: _rectTween.end!.height,
+                                child: Opacity(
+                                  opacity:
+                                      openOpacityTween!.evaluate(animation),
+                                  child: Builder(
+                                    key: _openBuilderKey,
+                                    builder: (BuildContext context) {
+                                      return openBuilder(
+                                          context, closeContainer);
+                                    },
+                                  ),
                                 ),
                               ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
                   ),
                 ),
               ),
-            ),
-          );
-        },
+            );
+          },
+        ),
       ),
     );
   }
@@ -899,6 +936,234 @@ class _FlippableTweenSequence<T> extends TweenSequence<T> {
       _flipped = _FlippableTweenSequence<T>(newItems);
     }
     return _flipped;
+  }
+}
+
+mixin HorizontalTransitionMixin<T> on ModalRoute<T> {
+  static bool _isPopGestureEnabled<T>(PageRoute<T> route) {
+    // If there's nothing to go back to, then obviously we don't support
+    // the back gesture.
+    if (route.isFirst) return false;
+    // If the route wouldn't actually pop if we popped it, then the gesture
+    // would be really confusing (or would skip internal routes), so disallow it.
+    if (route.willHandlePopInternally) return false;
+    // If attempts to dismiss this route might be vetoed such as in a page
+    // with forms, then do not allow the user to dismiss the route with a swipe.
+    if (route.hasScopedWillPopCallback) return false;
+    // Fullscreen dialogs aren't dismissible by back swipe.
+    if (route.fullscreenDialog) return false;
+    // If we're in an animation already, we cannot be manually swiped.
+    if (route.animation!.status != AnimationStatus.completed) return false;
+    // If we're being popped into, we also cannot be swiped until the pop above
+    // it completes. This translates to our secondary animation being
+    // dismissed.
+    if (route.secondaryAnimation!.status != AnimationStatus.dismissed)
+      return false;
+    // If we're in a gesture already, we cannot start another.
+    if (isPopGestureInProgress(route)) return false;
+
+    // Looks like a back gesture would be welcome!
+    return true;
+  }
+
+  static bool isPopGestureInProgress(PageRoute<dynamic> route) {
+    return route.navigator!.userGestureInProgress;
+  }
+}
+
+class _AeroBackGestureDetector<T> extends StatefulWidget {
+  const _AeroBackGestureDetector({
+    Key? key,
+    required this.enabledCallback,
+    required this.onStartPopGesture,
+    required this.child,
+  }) : super(key: key);
+
+  final Widget child;
+
+  final ValueGetter<bool> enabledCallback;
+
+  final ValueGetter<_AeroBackGestureController<T>> onStartPopGesture;
+
+  @override
+  _AeroBackGestureDetectorState<T> createState() =>
+      _AeroBackGestureDetectorState<T>();
+}
+
+class _AeroBackGestureDetectorState<T>
+    extends State<_AeroBackGestureDetector<T>> {
+  _AeroBackGestureController<T>? _backGestureController;
+
+  late HorizontalDragGestureRecognizer _recognizer;
+
+  @override
+  void initState() {
+    super.initState();
+    _recognizer = HorizontalDragGestureRecognizer(debugOwner: this)
+      ..onStart = _handleDragStart
+      ..onUpdate = _handleDragUpdate
+      ..onEnd = _handleDragEnd
+      ..onCancel = _handleDragCancel;
+  }
+
+  @override
+  void dispose() {
+    _recognizer.dispose();
+    super.dispose();
+  }
+
+  void _handleDragStart(DragStartDetails details) {
+    assert(mounted);
+    assert(_backGestureController == null);
+    _backGestureController = widget.onStartPopGesture();
+  }
+
+  void _handleDragUpdate(DragUpdateDetails details) {
+    assert(mounted);
+    assert(_backGestureController != null);
+    _backGestureController!.dragUpdate(
+        _convertToLogical(details.primaryDelta! / context.size!.width));
+  }
+
+  void _handleDragEnd(DragEndDetails details) {
+    assert(mounted);
+    assert(_backGestureController != null);
+    _backGestureController!.dragEnd(_convertToLogical(
+        details.velocity.pixelsPerSecond.dx / context.size!.width));
+    _backGestureController = null;
+  }
+
+  void _handleDragCancel() {
+    assert(mounted);
+    // This can be called even if start is not called, paired with the "down" event
+    // that we don't consider here.
+    _backGestureController?.dragEnd(0.0);
+    _backGestureController = null;
+  }
+
+  void _handlePointerDown(PointerDownEvent event) {
+    if (widget.enabledCallback()) _recognizer.addPointer(event);
+  }
+
+  double _convertToLogical(double value) {
+    switch (Directionality.of(context)) {
+      case TextDirection.rtl:
+        return -value;
+      case TextDirection.ltr:
+        return value;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    assert(debugCheckHasDirectionality(context));
+    // For devices with notches, the drag area needs to be larger on the side
+    // that has the notch.
+    double dragAreaWidth = Directionality.of(context) == TextDirection.ltr
+        ? MediaQuery.of(context).padding.left
+        : MediaQuery.of(context).padding.right;
+    dragAreaWidth = max(dragAreaWidth, _kBackGestureWidth);
+    return Stack(
+      fit: StackFit.passthrough,
+      children: <Widget>[
+        widget.child,
+        PositionedDirectional(
+          start: 0.0,
+          width: MediaQuery.of(context).size.width,
+          top: 0.0,
+          bottom: 0.0,
+          child: Listener(
+            onPointerDown: _handlePointerDown,
+            behavior: HitTestBehavior.translucent,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _AeroBackGestureController<T> {
+  /// Creates a controller for an iOS-style back gesture.
+  ///
+  /// The [navigator] and [controller] arguments must not be null.
+  _AeroBackGestureController({
+    required this.navigator,
+    required this.controller,
+  }) {
+    navigator.didStartUserGesture();
+  }
+
+  final AnimationController controller;
+  final NavigatorState navigator;
+
+  /// The drag gesture has changed by [fractionalDelta]. The total range of the
+  /// drag should be 0.0 to 1.0.
+  void dragUpdate(double delta) {
+    controller.value -= delta;
+  }
+
+  /// The drag gesture has ended with a horizontal motion of
+  /// [fractionalVelocity] as a fraction of screen width per second.
+  void dragEnd(double velocity) {
+    // Fling in the appropriate direction.
+    // AnimationController.fling is guaranteed to
+    // take at least one frame.
+    //
+    // This curve has been determined through rigorously eyeballing native iOS
+    // animations.
+    const Curve animationCurve = Curves.fastLinearToSlowEaseIn;
+    final bool animateForward;
+
+    // If the user releases the page before mid screen with sufficient velocity,
+    // or after mid screen, we should animate the page out. Otherwise, the page
+    // should be animated back in.
+    if (velocity.abs() >= _kMinFlingVelocity)
+      animateForward = velocity <= 0;
+    else
+      animateForward = controller.value > 0.5;
+
+    if (animateForward) {
+      // The closer the panel is to dismissing, the shorter the animation is.
+      // We want to cap the animation time, but we want to use a linear curve
+      // to determine it.
+      final int droppedPageForwardAnimationTime = min(
+        lerpDouble(
+                _kMaxDroppedSwipePageForwardAnimationTime, 0, controller.value)!
+            .floor(),
+        _kMaxPageBackAnimationTime,
+      );
+      controller.animateTo(1.0,
+          duration: Duration(milliseconds: droppedPageForwardAnimationTime),
+          curve: animationCurve);
+    } else {
+      // This route is destined to pop at this point. Reuse navigator's pop.
+      navigator.pop();
+
+      // The popping may have finished inline if already at the target destination.
+      if (controller.isAnimating) {
+        // Otherwise, use a custom popping animation duration and curve.
+        final int droppedPageBackAnimationTime = lerpDouble(
+                0, _kMaxDroppedSwipePageForwardAnimationTime, controller.value)!
+            .floor();
+        controller.animateBack(0.0,
+            duration: Duration(milliseconds: droppedPageBackAnimationTime),
+            curve: animationCurve);
+      }
+    }
+
+    if (controller.isAnimating) {
+      // Keep the userGestureInProgress in true state so we don't change the
+      // curve of the page transition mid-flight since CupertinoPageTransition
+      // depends on userGestureInProgress.
+      late AnimationStatusListener animationStatusCallback;
+      animationStatusCallback = (AnimationStatus status) {
+        navigator.didStopUserGesture();
+        controller.removeStatusListener(animationStatusCallback);
+      };
+      controller.addStatusListener(animationStatusCallback);
+    } else {
+      navigator.didStopUserGesture();
+    }
   }
 }
 
