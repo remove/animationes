@@ -422,7 +422,7 @@ class _HideableState extends State<_Hideable> {
   }
 }
 
-class _OpenContainerRoute<T> extends PageRoute<T>
+class _OpenContainerRoute<T> extends ModalRoute<T>
     with HorizontalTransitionMixin {
   _OpenContainerRoute({
     required this.closedColor,
@@ -630,6 +630,8 @@ class _OpenContainerRoute<T> extends PageRoute<T>
           _toggleHideable(hide: false);
           break;
         case AnimationStatus.completed:
+          _toggleHideable(hide: true);
+          break;
         case AnimationStatus.forward:
         case AnimationStatus.reverse:
           break;
@@ -940,7 +942,7 @@ class _FlippableTweenSequence<T> extends TweenSequence<T> {
 }
 
 mixin HorizontalTransitionMixin<T> on ModalRoute<T> {
-  static bool _isPopGestureEnabled<T>(PageRoute<T> route) {
+  static bool _isPopGestureEnabled<T>(ModalRoute<T> route) {
     // If there's nothing to go back to, then obviously we don't support
     // the back gesture.
     if (route.isFirst) return false;
@@ -950,8 +952,6 @@ mixin HorizontalTransitionMixin<T> on ModalRoute<T> {
     // If attempts to dismiss this route might be vetoed such as in a page
     // with forms, then do not allow the user to dismiss the route with a swipe.
     if (route.hasScopedWillPopCallback) return false;
-    // Fullscreen dialogs aren't dismissible by back swipe.
-    if (route.fullscreenDialog) return false;
     // If we're in an animation already, we cannot be manually swiped.
     if (route.animation!.status != AnimationStatus.completed) return false;
     // If we're being popped into, we also cannot be swiped until the pop above
@@ -966,7 +966,7 @@ mixin HorizontalTransitionMixin<T> on ModalRoute<T> {
     return true;
   }
 
-  static bool isPopGestureInProgress(PageRoute<dynamic> route) {
+  static bool isPopGestureInProgress(ModalRoute<dynamic> route) {
     return route.navigator!.userGestureInProgress;
   }
 }
@@ -1022,7 +1022,7 @@ class _AeroBackGestureDetectorState<T>
     assert(mounted);
     assert(_backGestureController != null);
     _backGestureController!.dragUpdate(
-        _convertToLogical(details.primaryDelta! / context.size!.width));
+        _convertToLogical(details.primaryDelta! / (context.size!.width / 1.5)));
   }
 
   void _handleDragEnd(DragEndDetails details) {
