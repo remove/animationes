@@ -618,6 +618,8 @@ class _OpenContainerRoute<T> extends ModalRoute<T>
   AnimationStatus? _lastAnimationStatus;
   AnimationStatus? _currentAnimationStatus;
 
+  bool _onPanDownLock = false;
+
   @override
   TickerFuture didPush() {
     _takeMeasurements(navigatorContext: hideableKey.currentContext!);
@@ -627,12 +629,15 @@ class _OpenContainerRoute<T> extends ModalRoute<T>
       _currentAnimationStatus = status;
       switch (status) {
         case AnimationStatus.dismissed:
-          _toggleHideable(hide: false);
+          if (!_onPanDownLock) _toggleHideable(hide: false);
           break;
         case AnimationStatus.completed:
           _toggleHideable(hide: true);
           break;
         case AnimationStatus.forward:
+          if (animation!.value != controller!.lowerBound)
+            _takeMeasurements(navigatorContext: subtreeContext!);
+          break;
         case AnimationStatus.reverse:
           break;
       }
@@ -643,10 +648,11 @@ class _OpenContainerRoute<T> extends ModalRoute<T>
 
   @override
   bool didPop(T? result) {
-    _takeMeasurements(
-      navigatorContext: subtreeContext!,
-      delayForSourceRoute: true,
-    );
+    if (!animation!.isDismissed)
+      _takeMeasurements(
+        navigatorContext: subtreeContext!,
+        delayForSourceRoute: true,
+      );
     return super.didPop(result);
   }
 
@@ -661,6 +667,7 @@ class _OpenContainerRoute<T> extends ModalRoute<T>
     super.dispose();
   }
 
+  ///还原借用的组件,并可设置是否可见
   void _toggleHideable({required bool hide}) {
     if (hideableKey.currentState != null) {
       hideableKey.currentState!
@@ -669,6 +676,7 @@ class _OpenContainerRoute<T> extends ModalRoute<T>
     }
   }
 
+  ///借用外部组件生成RectTween并用占位符替换
   void _takeMeasurements({
     required BuildContext navigatorContext,
     bool delayForSourceRoute = false,
@@ -763,6 +771,10 @@ class _OpenContainerRoute<T> extends ModalRoute<T>
         navigator: this.navigator!,
         controller: this.controller!,
       ),
+      onPanDownLock: (lock) {
+        _onPanDownLock = lock;
+        if (animation.isDismissed) _toggleHideable(hide: false);
+      },
       child: Align(
         alignment: Alignment.topLeft,
         child: AnimatedBuilder(
@@ -976,6 +988,7 @@ class _AeroBackGestureDetector<T> extends StatefulWidget {
     Key? key,
     required this.enabledCallback,
     required this.onStartPopGesture,
+    required this.onPanDownLock,
     required this.child,
   }) : super(key: key);
 
@@ -984,6 +997,8 @@ class _AeroBackGestureDetector<T> extends StatefulWidget {
   final ValueGetter<bool> enabledCallback;
 
   final ValueGetter<_AeroBackGestureController<T>> onStartPopGesture;
+
+  final Function onPanDownLock;
 
   @override
   _AeroBackGestureDetectorState<T> createState() =>
@@ -1015,6 +1030,7 @@ class _AeroBackGestureDetectorState<T>
   void _handleDragStart(DragStartDetails details) {
     assert(mounted);
     assert(_backGestureController == null);
+    widget.onPanDownLock(true);
     _backGestureController = widget.onStartPopGesture();
   }
 
@@ -1028,6 +1044,7 @@ class _AeroBackGestureDetectorState<T>
   void _handleDragEnd(DragEndDetails details) {
     assert(mounted);
     assert(_backGestureController != null);
+    widget.onPanDownLock(false);
     _backGestureController!.dragEnd(_convertToLogical(
         details.velocity.pixelsPerSecond.dx / context.size!.width));
     _backGestureController = null;
