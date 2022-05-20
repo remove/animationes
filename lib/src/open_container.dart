@@ -667,7 +667,6 @@ class _OpenContainerRoute<T> extends ModalRoute<T>
     super.dispose();
   }
 
-  ///还原借用的组件,并可设置是否可见
   void _toggleHideable({required bool hide}) {
     if (hideableKey.currentState != null) {
       hideableKey.currentState!
@@ -676,7 +675,6 @@ class _OpenContainerRoute<T> extends ModalRoute<T>
     }
   }
 
-  ///借用外部组件生成RectTween并用占位符替换
   void _takeMeasurements({
     required BuildContext navigatorContext,
     bool delayForSourceRoute = false,
@@ -1086,7 +1084,7 @@ class _AeroBackGestureDetectorState<T>
         widget.child,
         PositionedDirectional(
           start: 0.0,
-          width: MediaQuery.of(context).size.width,
+          width: dragAreaWidth,
           top: 0.0,
           bottom: 0.0,
           child: Listener(
